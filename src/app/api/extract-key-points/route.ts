@@ -1,47 +1,45 @@
-import { NextRequest } from 'next/server';
-import { streamText } from 'ai';
-import { google } from '@ai-sdk/google';
+import { documentStructureSchema } from "@/app/lib/schemas";
+import { google } from "@ai-sdk/google";
+import { streamObject } from "ai";
 
 export const maxDuration = 60;
 
-export async function POST(req: NextRequest) {
-  const formData = await req.formData();
-  const file = formData.get('file') as File | null;
+export async function POST(req: Request) {
+  const { files } = await req.json();
+  const firstFile = files[0].data;
 
-  if (!file) {
-    return new Response(JSON.stringify({ error: 'No file provided' }), {
-      status: 400,
-      headers: { 'Content-Type': 'application/json' },
-    });
-  }
-
-  const arrayBuffer = await file.arrayBuffer();
-  const base64 = Buffer.from(arrayBuffer).toString('base64');
-
-  const result = streamText({
-    model: google('gemini-1.5-pro-latest'),
+  const result = await streamObject({
+    model: google("gemini-1.5-pro-latest"),
     messages: [
       {
         role: "system",
-        content: "You are an AI assistant specialized in analyzing documents. Your task is to extract the main key points from the given document. For each key point, provide a title and brief content. Format your response as JSON with the following structure: { \"keyPoints\": [{ \"title\": \"Key Point Title\", \"content\": \"Key Point Content\" }] }"
+        content:
+          "You are a document analyzer. Extract the document structure including title, main headings, subheadings, and key points under each section. Organize the information hierarchically.",
       },
       {
         role: "user",
         content: [
           {
             type: "text",
-            text: "Extract the main key points from this document.",
+            text: "Please analyze this document and extract its structure with headings, subheadings, and key points.",
           },
           {
             type: "file",
-            data: base64,
+            data: firstFile,
             mimeType: "application/pdf",
           },
         ],
       },
     ],
+    schema: documentStructureSchema,
+    output: "object",
+    onFinish: ({ object }) => {
+      const res = documentStructureSchema.safeParse(object);
+      if (res.error) {
+        throw new Error(res.error.errors.map((e) => e.message).join("\n"));
+      }
+    },
   });
 
-  return result.toDataStreamResponse();
+  return result.toTextStreamResponse();
 }
-
